@@ -1,0 +1,456 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#101827">
+
+<title>LAN Connect</title>
+
+<style>
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: #101827;
+  color: white;
+  font-family: Arial, sans-serif;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+}
+
+.app {
+  width: 100%;
+  max-width: 420px;
+  background: #182438;
+  padding: 25px;
+  border-radius: 24px;
+  text-align: center;
+}
+
+h1 {
+  font-size: 30px;
+}
+
+.subtitle {
+  color: #a9b7ca;
+}
+
+button {
+  width: 100%;
+  padding: 15px;
+  border: none;
+  border-radius: 13px;
+  background: #3b82f6;
+  color: white;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+  margin-top: 12px;
+}
+
+button.secondary {
+  background: #293951;
+}
+
+.status {
+  background: #101827;
+  padding: 13px;
+  border-radius: 12px;
+  margin-top: 20px;
+  color: #cbd5e1;
+}
+
+#qr {
+  background: white;
+  padding: 15px;
+  border-radius: 12px;
+  display: inline-block;
+  margin-top: 20px;
+}
+
+#qr img {
+  display: block;
+}
+
+.hidden {
+  display: none !important;
+}
+
+#messages {
+  height: 150px;
+  overflow-y: auto;
+  background: #101827;
+  margin-top: 20px;
+  padding: 10px;
+  border-radius: 12px;
+  text-align: left;
+}
+
+input {
+  width: 100%;
+  padding: 13px;
+  margin-top: 10px;
+  border-radius: 10px;
+  border: 1px solid #40516b;
+  background: #101827;
+  color: white;
+}
+
+</style>
+</head>
+
+<body>
+
+<div class="app">
+
+<h1>LAN Connect</h1>
+
+<p class="subtitle">Scan. Connect. Share.</p>
+
+<div id="start">
+  <button id="createBtn">
+    Create QR to Connect
+  </button>
+</div>
+
+<div id="pairing" class="hidden">
+  <div id="qr"></div>
+  <p>Scan this QR with your second phone.</p>
+</div>
+
+<div id="status" class="status">
+  Not connected
+</div>
+
+<div id="features" class="hidden">
+
+  <div id="messages"></div>
+
+  <input
+    id="message"
+    placeholder="Write a message..."
+  >
+
+  <button id="sendBtn">Send Message</button>
+
+  <input type="file" id="file">
+
+  <button
+    class="secondary"
+    onclick="document.getElementById('file').click()">
+    Send File
+  </button>
+
+  <button
+    class="secondary"
+    id="screenBtn">
+    Share Screen
+  </button>
+
+  <button
+    class="secondary"
+    id="disconnectBtn">
+    Disconnect
+  </button>
+
+</div>
+
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+<script>
+
+const socket = io();
+
+let room = new URLSearchParams(
+  location.search
+).get("room");
+
+let pc;
+let channel;
+let pendingCandidates = [];
+
+const config = {
+  iceServers: [
+    {
+      urls: "stun:stun.l.google.com:19302"
+    }
+  ]
+};
+
+function status(text) {
+  document.getElementById("status").textContent = text;
+}
+
+function connected() {
+  document.getElementById("features")
+    .classList.remove("hidden");
+
+  document.getElementById("qr")
+    .classList.add("hidden");
+
+  status("Connected successfully!");
+}
+
+function addMessage(text) {
+  const div = document.createElement("p");
+  div.textContent = text;
+
+  document.getElementById("messages")
+    .appendChild(div);
+}
+
+function setupChannel(ch) {
+  channel = ch;
+
+  channel.onopen = connected;
+
+  channel.onmessage = event => {
+    if (typeof event.data === "string") {
+      try {
+        const data = JSON.parse(event.data);
+
+        if (data.type === "text") {
+          addMessage("Other: " + data.text);
+        }
+
+        if (data.type === "file") {
+          const a = document.createElement("a");
+          a.href = data.data;
+          a.download = data.name;
+          a.textContent = "Download " + data.name;
+
+          document.getElementById("messages")
+            .appendChild(a);
+        }
+      } catch {}
+    }
+  };
+}
+
+function createPeer(initiator) {
+  pc = new RTCPeerConnection(config);
+
+  pc.onicecandidate = event => {
+    if (event.candidate) {
+      socket.emit("ice-candidate", event.candidate);
+    }
+  };
+
+  pc.ondatachannel = event => {
+    setupChannel(event.channel);
+  };
+
+  if (initiator) {
+    setupChannel(
+      pc.createDataChannel("data")
+    );
+  }
+
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === "connected") {
+      connected();
+    }
+  };
+}
+
+socket.on("connect", () => {
+  if (room) {
+    socket.emit("join-room", room);
+  }
+});
+
+socket.on("joined", async ({ initiator }) => {
+
+  document.getElementById("start")
+    .classList.add("hidden");
+
+  document.getElementById("pairing")
+    .classList.remove("hidden");
+
+  createPeer(initiator);
+
+  if (initiator) {
+    const offer = await pc.createOffer();
+
+    await pc.setLocalDescription(offer);
+
+    socket.emit("offer", offer);
+  }
+});
+
+socket.on("offer", async offer => {
+
+  if (!pc) createPeer(false);
+
+  await pc.setRemoteDescription(offer);
+
+  for (const candidate of pendingCandidates) {
+    await pc.addIceCandidate(candidate);
+  }
+
+  pendingCandidates = [];
+
+  const answer = await pc.createAnswer();
+
+  await pc.setLocalDescription(answer);
+
+  socket.emit("answer", answer);
+});
+
+socket.on("answer", async answer => {
+
+  await pc.setRemoteDescription(answer);
+
+  for (const candidate of pendingCandidates) {
+    await pc.addIceCandidate(candidate);
+  }
+
+  pendingCandidates = [];
+});
+
+socket.on("ice-candidate", async candidate => {
+
+  if (pc && pc.remoteDescription) {
+    try {
+      await pc.addIceCandidate(candidate);
+    } catch {}
+  } else {
+    pendingCandidates.push(candidate);
+  }
+});
+
+socket.on("peer-joined", () => {
+  status("Second phone joined. Connecting...");
+});
+
+socket.on("peer-left", () => {
+  status("Other device disconnected");
+});
+
+socket.on("room-full", () => {
+  status("Room is full");
+});
+
+document.getElementById("createBtn").onclick = () => {
+
+  room = crypto.randomUUID();
+
+  const url = new URL(location.href);
+
+  url.searchParams.set("room", room);
+
+  history.replaceState({}, "", url);
+
+  document.getElementById("start")
+    .classList.add("hidden");
+
+  document.getElementById("pairing")
+    .classList.remove("hidden");
+
+  new QRCode(
+    document.getElementById("qr"),
+    {
+      text: url.toString(),
+      width: 220,
+      height: 220
+    }
+  );
+
+  status("Waiting for second phone...");
+
+  socket.emit("join-room", room);
+};
+
+document.getElementById("sendBtn").onclick = () => {
+
+  const input = document.getElementById("message");
+
+  if (
+    channel &&
+    channel.readyState === "open" &&
+    input.value.trim()
+  ) {
+    channel.send(JSON.stringify({
+      type: "text",
+      text: input.value
+    }));
+
+    addMessage("You: " + input.value);
+
+    input.value = "";
+  }
+};
+
+document.getElementById("file").onchange = async event => {
+
+  const file = event.target.files[0];
+
+  if (!file || !channel || channel.readyState !== "open") {
+    return;
+  }
+
+  if (file.size > 10 * 1024 * 1024) {
+    alert("Please select a file smaller than 10 MB.");
+    return;
+  }
+
+  const reader = new FileReader();
+
+  reader.onload = () => {
+    channel.send(JSON.stringify({
+      type: "file",
+      name: file.name,
+      data: reader.result
+    }));
+
+    addMessage("Sent: " + file.name);
+  };
+
+  reader.readAsDataURL(file);
+};
+
+document.getElementById("screenBtn").onclick = async () => {
+
+  try {
+    const stream =
+      await navigator.mediaDevices.getDisplayMedia({
+        video: true
+      });
+
+    stream.getTracks().forEach(track => {
+      pc.addTrack(track, stream);
+    });
+
+    status("Screen sharing started");
+  } catch (error) {
+    status("Screen sharing requires HTTPS");
+  }
+};
+
+document.getElementById("disconnectBtn").onclick = () => {
+
+  if (pc) pc.close();
+
+  socket.disconnect();
+
+  status("Disconnected");
+
+  document.getElementById("features")
+    .classList.add("hidden");
+};
+
+</script>
+
+</body>
+</html>
