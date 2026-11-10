@@ -1,10 +1,13 @@
+
 {
-  "name": "lan-connect-simple",
+  "name": "lan-connect",
   "version": "1.0.0",
   "private": true,
-  "description": "Simple QR-based peer-to-peer mobile connection",
+  "description": "Simple QR-based peer-to-peer connection",
   "main": "server.js",
-  "scripts": { "start": "node server.js" },
+  "scripts": {
+    "start": "node server.js"
+  },
   "dependencies": {
     "express": "^4.21.2",
     "socket.io": "^4.8.1"
